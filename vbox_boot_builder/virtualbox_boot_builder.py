@@ -4,6 +4,7 @@ import ctypes
 import json
 from collections import deque
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -22,6 +23,18 @@ else:
 BACKEND_DIR = RESOURCE_DIR / "backend"
 RUNTIME_DIR = APP_DIR / "runtime"
 DEFAULT_OUTPUT_DIR = APP_DIR.parent if not getattr(sys, "frozen", False) else APP_DIR
+
+HIDDEN_SUBPROCESS_KWARGS: dict[str, object] = {}
+if sys.platform == "win32":
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    HIDDEN_SUBPROCESS_KWARGS = {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+        "startupinfo": startupinfo,
+    }
+
+CREATE_VHD_ESTIMATE_RE = re.compile(r"Estimado a copiar:\s*([0-9]+(?:[.,][0-9]+)?)\s*GB", re.IGNORECASE)
+CREATE_VHD_CURRENT_RE = re.compile(r"Tamano actual:\s*([0-9]+(?:[.,][0-9]+)?)\s*GB", re.IGNORECASE)
 
 
 PRESETS = {
@@ -206,6 +219,13 @@ TRANSLATIONS = {
         "log_completed": "=== Workflow completed ===",
         "completed_message": "The workflow finished successfully.",
         "run_script": ">>> Running {script}",
+        "progress_idle": "Idle",
+        "progress_preparing": "Preparing snapshot...",
+        "progress_writing": "Writing image: {processed:.2f} GB",
+        "progress_writing_total": "Writing image: {processed:.2f} / {total:.2f} GB",
+        "progress_repairing": "Repairing boot files...",
+        "progress_configuring_vm": "Configuring VirtualBox VM...",
+        "progress_completed": "Workflow completed",
     },
     "es": {
         "window_title": "Constructor de Arranque para VirtualBox",
@@ -313,6 +333,13 @@ TRANSLATIONS = {
         "log_completed": "=== Flujo completado ===",
         "completed_message": "El flujo terminó correctamente.",
         "run_script": ">>> Ejecutando {script}",
+        "progress_idle": "En espera",
+        "progress_preparing": "Preparando snapshot...",
+        "progress_writing": "Escribiendo imagen: {processed:.2f} GB",
+        "progress_writing_total": "Escribiendo imagen: {processed:.2f} / {total:.2f} GB",
+        "progress_repairing": "Reparando archivos de arranque...",
+        "progress_configuring_vm": "Configurando VM de VirtualBox...",
+        "progress_completed": "Flujo completado",
     },
 }
 
@@ -390,6 +417,7 @@ class VBoxBootBuilderApp:
                     errors="replace",
                     timeout=15,
                     check=False,
+                    **HIDDEN_SUBPROCESS_KWARGS,
                 )
             except Exception:
                 continue
@@ -451,6 +479,8 @@ class VBoxBootBuilderApp:
         self.disk_var = tk.StringVar()
         self.output_dir_var = tk.StringVar(value=str(DEFAULT_OUTPUT_DIR))
         self.output_name_var = tk.StringVar(value="bootable-image.vhd")
+        self.progress_value_var = tk.DoubleVar(value=0.0)
+        self.progress_detail_var = tk.StringVar(value=self.tr("progress_idle"))
         self.force_overwrite_var = tk.BooleanVar(value=True)
         self.repair_after_create_var = tk.BooleanVar(value=True)
         self.firmware_var = tk.StringVar(value="BIOS")
@@ -469,6 +499,8 @@ class VBoxBootBuilderApp:
         self.chipset_var = tk.StringVar(value="PIIX3")
         self.detach_disks_var = tk.BooleanVar(value=True)
         self.last_auto_output_name = "bootable-image.vhd"
+        self.progress_total_gb: float | None = None
+        self.progress_processed_gb = 0.0
         self.refresh_admin_label()
 
     def refresh_admin_label(self) -> None:
@@ -566,8 +598,9 @@ class VBoxBootBuilderApp:
 
         bottom = ttk.Frame(self.root, padding=(12, 0, 12, 12))
         bottom.pack(fill="x")
-        self.progress = ttk.Progressbar(bottom, mode="indeterminate")
+        self.progress = ttk.Progressbar(bottom, mode="determinate", maximum=100, variable=self.progress_value_var)
         self.progress.pack(side="left", fill="x", expand=True)
+        ttk.Label(bottom, textvariable=self.progress_detail_var, width=30).pack(side="left", padx=(12, 0))
         ttk.Label(bottom, textvariable=self.status_var).pack(side="left", padx=(12, 0))
         ttk.Button(bottom, text=self.tr("refresh_disks"), command=self.refresh_disks).pack(side="right", padx=(8, 0))
         ttk.Button(bottom, text=self.tr("run_flow"), command=self.start_flow).pack(side="right")
@@ -716,6 +749,64 @@ class VBoxBootBuilderApp:
     def set_status(self, text: str) -> None:
         self.status_var.set(text)
 
+    def _show_log_tab(self) -> None:
+        try:
+            self.notebook.select(self.log_tab)
+        except Exception:
+            pass
+
+    def _set_progress_indeterminate(self, detail: str | None = None) -> None:
+        self.progress.stop()
+        self.progress.configure(mode="indeterminate")
+        self.progress.start(8)
+        if detail is not None:
+            self.progress_detail_var.set(detail)
+
+    def _set_progress_determinate(self, processed_gb: float, total_gb: float | None = None) -> None:
+        self.progress.stop()
+        self.progress.configure(mode="determinate", maximum=100)
+        self.progress_processed_gb = processed_gb
+        self.progress_total_gb = total_gb
+        if total_gb and total_gb > 0:
+            percent = max(0.0, min((processed_gb / total_gb) * 100.0, 100.0))
+            self.progress_value_var.set(percent)
+            self.progress_detail_var.set(self.tr("progress_writing_total", processed=processed_gb, total=total_gb))
+        else:
+            self.progress_value_var.set(0.0)
+            self.progress_detail_var.set(self.tr("progress_writing", processed=processed_gb))
+
+    def _reset_progress_state(self) -> None:
+        self.progress_total_gb = None
+        self.progress_processed_gb = 0.0
+        self.progress_value_var.set(0.0)
+        self._set_progress_indeterminate(self.tr("progress_idle"))
+
+    def _parse_gb_value(self, raw_value: str) -> float | None:
+        try:
+            return float(raw_value.replace(",", "."))
+        except ValueError:
+            return None
+
+    def _handle_script_progress_line(self, script_name: str, line: str) -> None:
+        if script_name == "create-vhd.ps1":
+            if "Preparando snapshot VSS" in line:
+                self.root.after(0, lambda: self._set_progress_indeterminate(self.tr("progress_preparing")))
+
+            estimate_match = CREATE_VHD_ESTIMATE_RE.search(line)
+            if estimate_match:
+                total_gb = self._parse_gb_value(estimate_match.group(1))
+                if total_gb is not None:
+                    self.progress_total_gb = total_gb
+                    current_gb = self.progress_processed_gb
+                    self.root.after(0, lambda total_gb=total_gb, current_gb=current_gb: self._set_progress_determinate(current_gb, total_gb))
+
+            current_match = CREATE_VHD_CURRENT_RE.search(line)
+            if current_match:
+                processed_gb = self._parse_gb_value(current_match.group(1))
+                if processed_gb is not None:
+                    total_gb = self.progress_total_gb
+                    self.root.after(0, lambda processed_gb=processed_gb, total_gb=total_gb: self._set_progress_determinate(processed_gb, total_gb))
+
     def browse_output_directory(self) -> None:
         initial_dir = self.output_dir_var.get().strip() or str(DEFAULT_OUTPUT_DIR)
         path = filedialog.askdirectory(title=self.tr("output_directory"), initialdir=initial_dir, mustexist=False)
@@ -783,7 +874,14 @@ class VBoxBootBuilderApp:
     def run_powershell_json(self, script_name: str, arguments: list[str] | None = None) -> object:
         script_path = BACKEND_DIR / script_name
         cmd = self._powershell_command(script_path, arguments or [])
-        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            **HIDDEN_SUBPROCESS_KWARGS,
+        )
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or result.stdout.strip() or f"Fallo al ejecutar {script_name}")
         data = json.loads(result.stdout)
@@ -1006,7 +1104,8 @@ class VBoxBootBuilderApp:
 
         self.log_text.delete("1.0", "end")
         self.status_var.set(self.tr("status_running"))
-        self.progress.start(8)
+        self._reset_progress_state()
+        self._show_log_tab()
         self.worker_thread = threading.Thread(target=self._run_flow_worker, daemon=True)
         self.worker_thread.start()
 
@@ -1083,6 +1182,10 @@ class VBoxBootBuilderApp:
             self.log(self.tr("log_completed"))
             self.root.after(0, lambda: messagebox.showinfo(self.tr("dialog_completed"), self.tr("completed_message")))
             self.root.after(0, lambda: self.set_status(self.tr("status_completed")))
+            self.root.after(0, lambda: self.progress.stop())
+            self.root.after(0, lambda: self.progress.configure(mode="determinate", maximum=100))
+            self.root.after(0, lambda: self.progress_value_var.set(100.0))
+            self.root.after(0, lambda: self.progress_detail_var.set(self.tr("progress_completed")))
         except Exception as exc:
             self.log("")
             self.log(f"[ERROR] {exc}")
@@ -1095,6 +1198,12 @@ class VBoxBootBuilderApp:
         script_path = BACKEND_DIR / script_name
         self.log("")
         self.log(self.tr("run_script", script=script_name))
+        if script_name == "create-vhd.ps1":
+            self.root.after(0, lambda: self._set_progress_indeterminate(self.tr("progress_preparing")))
+        elif script_name == "repair-vhd.ps1":
+            self.root.after(0, lambda: self._set_progress_indeterminate(self.tr("progress_repairing")))
+        elif script_name == "configure-vbox-vm.ps1":
+            self.root.after(0, lambda: self._set_progress_indeterminate(self.tr("progress_configuring_vm")))
         cmd = self._powershell_command(script_path, arguments)
         output_tail: deque[str] = deque(maxlen=25)
         process = subprocess.Popen(
@@ -1105,12 +1214,14 @@ class VBoxBootBuilderApp:
             encoding="utf-8",
             errors="replace",
             bufsize=1,
+            **HIDDEN_SUBPROCESS_KWARGS,
         )
         assert process.stdout is not None
         for line in process.stdout:
             clean_line = line.rstrip()
             output_tail.append(clean_line)
             self.log(clean_line)
+            self._handle_script_progress_line(script_name, clean_line)
         process.wait()
         if process.returncode != 0:
             tail_text = "\n".join(item for item in output_tail if item)

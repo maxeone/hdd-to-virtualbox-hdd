@@ -128,19 +128,39 @@ if (-not (Test-Path $exePath)) {
     Expand-Archive -LiteralPath $zipPath -DestinationPath $disk2vhdDir -Force
 }
 
-$sourceVolumes = foreach ($partitionNumber in ($PartitionNumbers | Sort-Object -Unique)) {
+$sourceVolumes = @()
+$estimatedUsedBytes = 0L
+foreach ($partitionNumber in ($PartitionNumbers | Sort-Object -Unique)) {
     $partition = Get-Partition -DiskNumber $DiskNumber -PartitionNumber $partitionNumber -ErrorAction SilentlyContinue
     if (-not $partition) {
         throw "No encuentro la particion $partitionNumber en el disco $DiskNumber."
     }
 
-    Ensure-DriveLetter -DiskNumber $DiskNumber -PartitionNumber $partitionNumber
+    $mountPath = Ensure-DriveLetter -DiskNumber $DiskNumber -PartitionNumber $partitionNumber
+    $sourceVolumes += $mountPath
+
+    try {
+        $driveLetter = $mountPath.Substring(0, 1)
+        $volume = Get-Volume -DriveLetter $driveLetter -ErrorAction SilentlyContinue
+        if ($volume -and $null -ne $volume.Size -and $null -ne $volume.SizeRemaining) {
+            $usedBytes = [int64]$volume.Size - [int64]$volume.SizeRemaining
+            if ($usedBytes -gt 0) {
+                $estimatedUsedBytes += $usedBytes
+            }
+        }
+    }
+    catch {
+    }
 }
 
 Write-Host "Creando imagen desde el disco $DiskNumber"
 Write-Host "Particiones seleccionadas: $($PartitionNumbers -join ', ')"
 Write-Host "Volumenes usados: $($sourceVolumes -join ', ')"
 Write-Host "Salida: $resolvedOutputPath"
+if ($estimatedUsedBytes -gt 0) {
+    $estimatedUsedGB = [math]::Round($estimatedUsedBytes / 1GB, 2)
+    Write-Host ("Estimado a copiar: {0} GB" -f $estimatedUsedGB)
+}
 
 try {
     $arguments = @("/accepteula") + $sourceVolumes + @($resolvedOutputPath)
