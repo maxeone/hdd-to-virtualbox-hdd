@@ -178,6 +178,49 @@ function Repair-BiosBoot {
     }
 }
 
+function Repair-BiosBootWithFallback {
+    param(
+        [int]$DiskNumber,
+        [System.Collections.IEnumerable]$Partitions,
+        [Microsoft.Management.Infrastructure.CimInstance]$BootPartition,
+        [Microsoft.Management.Infrastructure.CimInstance]$WindowsPartition,
+        [string]$BootLetter,
+        [string]$WindowsLetter
+    )
+
+    $usedPartition = $null
+
+    if ($BootPartition.PartitionNumber -ne $WindowsPartition.PartitionNumber) {
+        try {
+            Repair-BiosBoot `
+                -DiskNumber $DiskNumber `
+                -Partitions $Partitions `
+                -BootLetter $BootLetter `
+                -WindowsLetter $WindowsLetter `
+                -BootPartitionNumber $BootPartition.PartitionNumber
+            $usedPartition = $BootPartition
+        }
+        catch {
+            Write-Host ""
+            Write-Host "La particion de arranque dedicada no quedo utilizable. Cambio a arranque directo desde la particion de Windows."
+            Write-Host "Motivo: $($_.Exception.Message)"
+            Write-Host ""
+        }
+    }
+
+    if (-not $usedPartition) {
+        Repair-BiosBoot `
+            -DiskNumber $DiskNumber `
+            -Partitions $Partitions `
+            -BootLetter $WindowsLetter `
+            -WindowsLetter $WindowsLetter `
+            -BootPartitionNumber $WindowsPartition.PartitionNumber
+        $usedPartition = $WindowsPartition
+    }
+
+    return $usedPartition
+}
+
 function Repair-UefiBoot {
     param(
         [string]$BootLetter,
@@ -320,7 +363,19 @@ try {
         Repair-UefiBoot -BootLetter $bootLetter -WindowsLetter $windowsLetter
     }
     else {
-        Repair-BiosBoot -DiskNumber $disk.Number -Partitions $partitions -BootLetter $bootLetter -WindowsLetter $windowsLetter -BootPartitionNumber $bootPartition.PartitionNumber
+        $usedBootPartition = Repair-BiosBootWithFallback `
+            -DiskNumber $disk.Number `
+            -Partitions $partitions `
+            -BootPartition $bootPartition `
+            -WindowsPartition $windowsPartition `
+            -BootLetter $bootLetter `
+            -WindowsLetter $windowsLetter
+
+        if ($usedBootPartition.PartitionNumber -ne $bootPartition.PartitionNumber) {
+            $bootPartition = $usedBootPartition
+            $bootLetter = Ensure-DriveLetter -DiskNumber $disk.Number -PartitionNumber $bootPartition.PartitionNumber
+            Write-Host "Particion BIOS usada finalmente: $bootLetter (Partition $($bootPartition.PartitionNumber))"
+        }
     }
 
     if (-not $SkipStorageDriverPatch) {

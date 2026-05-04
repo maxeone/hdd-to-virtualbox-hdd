@@ -126,7 +126,8 @@ TRANSLATIONS = {
         "tab_vbox": "VirtualBox",
         "tab_log": "Log",
         "refresh_disks": "Refresh disks",
-        "run_flow": "Run workflow",
+        "run_flow": "Start process",
+        "cancel_process": "Cancel process",
         "source_disk": "Source disk",
         "refresh": "Refresh",
         "auto_select": "Auto-select suggested",
@@ -160,6 +161,7 @@ TRANSLATIONS = {
         "status_disks_updated": "Disks updated",
         "status_running": "Running...",
         "status_completed": "Completed",
+        "status_canceled": "Canceled",
         "status_error": "Error",
         "dialog_admin": "Administrator",
         "dialog_error": "Error",
@@ -211,6 +213,7 @@ TRANSLATIONS = {
         "memory_error": "Memory must be a positive integer.",
         "cpu_error": "CPUs must be a positive integer.",
         "already_running": "A workflow is already running.",
+        "no_running_process": "No process is currently running.",
         "preset_applied": "[preset] Applied: {preset}",
         "log_header": "=== VirtualBox Boot Builder ===",
         "log_preset": "Preset: {preset}",
@@ -227,6 +230,7 @@ TRANSLATIONS = {
         "progress_repairing": "Repairing boot files...",
         "progress_configuring_vm": "Configuring VirtualBox VM...",
         "progress_completed": "Workflow completed",
+        "progress_canceled": "Process canceled",
     },
     "es": {
         "window_title": "Constructor de Arranque para VirtualBox",
@@ -240,7 +244,8 @@ TRANSLATIONS = {
         "tab_vbox": "VirtualBox",
         "tab_log": "Log",
         "refresh_disks": "Refrescar discos",
-        "run_flow": "Ejecutar flujo",
+        "run_flow": "Start process",
+        "cancel_process": "Cancel process",
         "source_disk": "Disco origen",
         "refresh": "Refrescar",
         "auto_select": "Auto-seleccionar sugeridas",
@@ -274,6 +279,7 @@ TRANSLATIONS = {
         "status_disks_updated": "Discos actualizados",
         "status_running": "Ejecutando...",
         "status_completed": "Completado",
+        "status_canceled": "Cancelado",
         "status_error": "Error",
         "dialog_admin": "Administrador",
         "dialog_error": "Error",
@@ -325,6 +331,7 @@ TRANSLATIONS = {
         "memory_error": "La memoria debe ser un entero positivo.",
         "cpu_error": "Los CPUs deben ser un entero positivo.",
         "already_running": "Ya hay un flujo ejecutándose.",
+        "no_running_process": "No hay ningun proceso ejecutandose.",
         "preset_applied": "[preset] Aplicado: {preset}",
         "log_header": "=== Constructor de Arranque para VirtualBox ===",
         "log_preset": "Preset: {preset}",
@@ -341,6 +348,7 @@ TRANSLATIONS = {
         "progress_repairing": "Reparando archivos de arranque...",
         "progress_configuring_vm": "Configurando VM de VirtualBox...",
         "progress_completed": "Flujo completado",
+        "progress_canceled": "Proceso cancelado",
     },
 }
 
@@ -459,6 +467,7 @@ class VBoxBootBuilderApp:
         self.active_backend_processes: set[subprocess.Popen[str]] = set()
         self.active_external_pids: set[int] = set()
         self.is_closing = False
+        self.cancel_requested = False
         self.disks: list[dict] = []
         self.partition_vars: dict[int, tk.BooleanVar] = {}
         self.selected_disk: dict | None = None
@@ -608,6 +617,7 @@ class VBoxBootBuilderApp:
         ttk.Label(bottom, textvariable=self.progress_detail_var, width=30).pack(side="left", padx=(12, 0))
         ttk.Label(bottom, textvariable=self.status_var).pack(side="left", padx=(12, 0))
         ttk.Button(bottom, text=self.tr("refresh_disks"), command=self.refresh_disks).pack(side="right", padx=(8, 0))
+        ttk.Button(bottom, text=self.tr("cancel_process"), command=self.cancel_process).pack(side="right", padx=(8, 0))
         ttk.Button(bottom, text=self.tr("run_flow"), command=self.start_flow).pack(side="right")
 
     def _build_source_tab(self) -> None:
@@ -786,11 +796,24 @@ class VBoxBootBuilderApp:
 
     def on_close(self) -> None:
         self.is_closing = True
+        self.cancel_requested = True
         self.terminate_active_processes()
         try:
             self.root.destroy()
         except Exception:
             pass
+
+    def cancel_process(self) -> None:
+        if not (self.worker_thread and self.worker_thread.is_alive()):
+            messagebox.showinfo(self.tr("dialog_in_progress"), self.tr("no_running_process"))
+            return
+
+        self.cancel_requested = True
+        self.terminate_active_processes()
+        self.set_status(self.tr("status_canceled"))
+        self.progress.stop()
+        self.progress.configure(mode="determinate", maximum=100)
+        self.progress_detail_var.set(self.tr("progress_canceled"))
 
     def _show_log_tab(self) -> None:
         try:
@@ -1153,6 +1176,7 @@ class VBoxBootBuilderApp:
             return
 
         self.log_text.delete("1.0", "end")
+        self.cancel_requested = False
         self.status_var.set(self.tr("status_running"))
         self._reset_progress_state()
         self._show_log_tab()
@@ -1182,6 +1206,8 @@ class VBoxBootBuilderApp:
                 create_args.append("-ForceOverwrite")
 
             self._run_script_with_live_output("create-vhd.ps1", create_args)
+            if self.cancel_requested:
+                return
 
             if self.repair_after_create_var.get():
                 repair_args = [
@@ -1204,6 +1230,8 @@ class VBoxBootBuilderApp:
                     repair_args.append("-RunChkdsk")
 
                 self._run_script_with_live_output("repair-vhd.ps1", repair_args)
+                if self.cancel_requested:
+                    return
 
             if self.configure_vm_var.get():
                 configure_args = [
@@ -1228,6 +1256,8 @@ class VBoxBootBuilderApp:
                     configure_args.append("-DetachExistingHardDisks")
 
                 self._run_script_with_live_output("configure-vbox-vm.ps1", configure_args)
+                if self.cancel_requested:
+                    return
 
             self.log(self.tr("log_completed"))
             if not self.is_closing:
@@ -1245,7 +1275,12 @@ class VBoxBootBuilderApp:
                 self.root.after(0, lambda: self.set_status(self.tr("status_error")))
         finally:
             self.active_external_pids.clear()
-            if not self.is_closing:
+            if not self.is_closing and self.cancel_requested:
+                self.root.after(0, lambda: self.set_status(self.tr("status_canceled")))
+                self.root.after(0, lambda: self.progress.stop())
+                self.root.after(0, lambda: self.progress.configure(mode="determinate", maximum=100))
+                self.root.after(0, lambda: self.progress_detail_var.set(self.tr("progress_canceled")))
+            elif not self.is_closing:
                 self.root.after(0, self.progress.stop)
 
     def _run_script_with_live_output(self, script_name: str, arguments: list[str]) -> None:
@@ -1278,8 +1313,12 @@ class VBoxBootBuilderApp:
                 output_tail.append(clean_line)
                 self.log(clean_line)
                 self._handle_script_progress_line(script_name, clean_line)
+                if self.cancel_requested:
+                    break
             process.wait()
             if self.is_closing:
+                return
+            if self.cancel_requested:
                 return
             if process.returncode != 0:
                 tail_text = "\n".join(item for item in output_tail if item)
