@@ -2,6 +2,8 @@
 
 HDD to VirtualBox HDD es una utilidad GUI para Windows para convertir una instalacion existente de Windows en un disco fisico, USB o externo en una imagen arrancable dentro de VirtualBox.
 
+Fue creada para emular dentro de VirtualBox un disco duro externo con Windows 7 y software precargado, de forma que se puedan hacer pruebas de entornos legados sin modificar el disco original.
+
 La aplicacion de escritorio incluida en este repositorio se llama `VirtualBox Boot Builder`. Automatiza un flujo que normalmente obliga a hacer varios pasos manuales:
 
 - inspeccionar discos y particiones
@@ -10,6 +12,16 @@ La aplicacion de escritorio incluida en este repositorio se llama `VirtualBox Bo
 - reparar los archivos de arranque offline
 - activar drivers de almacenamiento offline para reducir `STOP 0x7B`
 - opcionalmente crear o actualizar una VM de VirtualBox y adjuntar la imagen
+
+Eso hace que el proyecto sea especialmente util para pruebas con Windows 7, validacion de software legado, virtualizacion de discos externos, migracion de discos USB y ensayos de sistemas antiguos que dependen de un entorno ya configurado.
+
+## Casos de uso comunes
+
+- Emular en VirtualBox un disco externo con Windows 7
+- Arrancar un disco USB de Windows con software preinstalado para pruebas
+- Conservar un entorno legado de Windows 7 antes de una migracion
+- Validar software antiguo de empresa, laboratorio, industria o servicio dentro de una VM
+- Convertir un disco fisico de Windows en un VHD o VHDX legible por VirtualBox
 
 ## Funciones principales
 
