@@ -35,6 +35,7 @@ if sys.platform == "win32":
 
 CREATE_VHD_ESTIMATE_RE = re.compile(r"Estimado a copiar:\s*([0-9]+(?:[.,][0-9]+)?)\s*GB", re.IGNORECASE)
 CREATE_VHD_CURRENT_RE = re.compile(r"Tamano actual:\s*([0-9]+(?:[.,][0-9]+)?)\s*GB", re.IGNORECASE)
+CREATE_VHD_PID_RE = re.compile(r"Disk2vhd PID:\s*(\d+)", re.IGNORECASE)
 
 
 PRESETS = {
@@ -455,6 +456,9 @@ class VBoxBootBuilderApp:
 
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.worker_thread: threading.Thread | None = None
+        self.active_backend_processes: set[subprocess.Popen[str]] = set()
+        self.active_external_pids: set[int] = set()
+        self.is_closing = False
         self.disks: list[dict] = []
         self.partition_vars: dict[int, tk.BooleanVar] = {}
         self.selected_disk: dict | None = None
@@ -466,6 +470,7 @@ class VBoxBootBuilderApp:
 
         self._build_vars()
         self._build_ui()
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after(100, self._flush_log_queue)
         ensure_runtime_dir()
         self.apply_preset(initial=True)
@@ -741,13 +746,51 @@ class VBoxBootBuilderApp:
         except queue.Empty:
             pass
         finally:
-            self.root.after(100, self._flush_log_queue)
+            if not self.is_closing and self.root.winfo_exists():
+                self.root.after(100, self._flush_log_queue)
 
     def log(self, text: str) -> None:
         self.log_queue.put(text)
 
     def set_status(self, text: str) -> None:
         self.status_var.set(text)
+
+    def _run_hidden_command(self, command: list[str]) -> None:
+        try:
+            subprocess.run(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                **HIDDEN_SUBPROCESS_KWARGS,
+            )
+        except Exception:
+            pass
+
+    def terminate_active_processes(self) -> None:
+        for process in list(self.active_backend_processes):
+            try:
+                if process.poll() is None:
+                    self._run_hidden_command(["taskkill", "/PID", str(process.pid), "/T", "/F"])
+            except Exception:
+                pass
+
+        for pid in list(self.active_external_pids):
+            try:
+                self._run_hidden_command(["taskkill", "/PID", str(pid), "/T", "/F"])
+            except Exception:
+                pass
+
+        self.active_backend_processes.clear()
+        self.active_external_pids.clear()
+
+    def on_close(self) -> None:
+        self.is_closing = True
+        self.terminate_active_processes()
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
 
     def _show_log_tab(self) -> None:
         try:
@@ -788,7 +831,14 @@ class VBoxBootBuilderApp:
             return None
 
     def _handle_script_progress_line(self, script_name: str, line: str) -> None:
+        if self.is_closing or not self.root.winfo_exists():
+            return
+
         if script_name == "create-vhd.ps1":
+            pid_match = CREATE_VHD_PID_RE.search(line)
+            if pid_match:
+                self.active_external_pids.add(int(pid_match.group(1)))
+
             if "Preparando snapshot VSS" in line:
                 self.root.after(0, lambda: self._set_progress_indeterminate(self.tr("progress_preparing")))
 
@@ -1180,19 +1230,23 @@ class VBoxBootBuilderApp:
                 self._run_script_with_live_output("configure-vbox-vm.ps1", configure_args)
 
             self.log(self.tr("log_completed"))
-            self.root.after(0, lambda: messagebox.showinfo(self.tr("dialog_completed"), self.tr("completed_message")))
-            self.root.after(0, lambda: self.set_status(self.tr("status_completed")))
-            self.root.after(0, lambda: self.progress.stop())
-            self.root.after(0, lambda: self.progress.configure(mode="determinate", maximum=100))
-            self.root.after(0, lambda: self.progress_value_var.set(100.0))
-            self.root.after(0, lambda: self.progress_detail_var.set(self.tr("progress_completed")))
+            if not self.is_closing:
+                self.root.after(0, lambda: messagebox.showinfo(self.tr("dialog_completed"), self.tr("completed_message")))
+                self.root.after(0, lambda: self.set_status(self.tr("status_completed")))
+                self.root.after(0, lambda: self.progress.stop())
+                self.root.after(0, lambda: self.progress.configure(mode="determinate", maximum=100))
+                self.root.after(0, lambda: self.progress_value_var.set(100.0))
+                self.root.after(0, lambda: self.progress_detail_var.set(self.tr("progress_completed")))
         except Exception as exc:
             self.log("")
             self.log(f"[ERROR] {exc}")
-            self.root.after(0, lambda: messagebox.showerror(self.tr("dialog_error"), str(exc)))
-            self.root.after(0, lambda: self.set_status(self.tr("status_error")))
+            if not self.is_closing:
+                self.root.after(0, lambda: messagebox.showerror(self.tr("dialog_error"), str(exc)))
+                self.root.after(0, lambda: self.set_status(self.tr("status_error")))
         finally:
-            self.root.after(0, self.progress.stop)
+            self.active_external_pids.clear()
+            if not self.is_closing:
+                self.root.after(0, self.progress.stop)
 
     def _run_script_with_live_output(self, script_name: str, arguments: list[str]) -> None:
         script_path = BACKEND_DIR / script_name
@@ -1216,18 +1270,24 @@ class VBoxBootBuilderApp:
             bufsize=1,
             **HIDDEN_SUBPROCESS_KWARGS,
         )
+        self.active_backend_processes.add(process)
         assert process.stdout is not None
-        for line in process.stdout:
-            clean_line = line.rstrip()
-            output_tail.append(clean_line)
-            self.log(clean_line)
-            self._handle_script_progress_line(script_name, clean_line)
-        process.wait()
-        if process.returncode != 0:
-            tail_text = "\n".join(item for item in output_tail if item)
-            if tail_text:
-                raise RuntimeError(f"{script_name} fallo con codigo {process.returncode}.\n\n{tail_text}")
-            raise RuntimeError(f"{script_name} fallo con codigo {process.returncode}.")
+        try:
+            for line in process.stdout:
+                clean_line = line.rstrip()
+                output_tail.append(clean_line)
+                self.log(clean_line)
+                self._handle_script_progress_line(script_name, clean_line)
+            process.wait()
+            if self.is_closing:
+                return
+            if process.returncode != 0:
+                tail_text = "\n".join(item for item in output_tail if item)
+                if tail_text:
+                    raise RuntimeError(f"{script_name} fallo con codigo {process.returncode}.\n\n{tail_text}")
+                raise RuntimeError(f"{script_name} fallo con codigo {process.returncode}.")
+        finally:
+            self.active_backend_processes.discard(process)
 
 
 def main() -> None:

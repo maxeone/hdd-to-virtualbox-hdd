@@ -165,6 +165,7 @@ if ($estimatedUsedBytes -gt 0) {
 try {
     $arguments = @("/accepteula") + $sourceVolumes + @($resolvedOutputPath)
     $process = Start-Process -FilePath $exePath -ArgumentList $arguments -PassThru -WindowStyle Hidden
+    Write-Host ("Disk2vhd PID: {0}" -f $process.Id)
 
     $lastBytes = 0L
     $lastTime = Get-Date
