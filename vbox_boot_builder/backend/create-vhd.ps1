@@ -3,7 +3,7 @@ param(
     [int]$DiskNumber,
 
     [Parameter(Mandatory = $true)]
-    [int[]]$PartitionNumbers,
+    [string[]]$PartitionNumbers,
 
     [Parameter(Mandatory = $true)]
     [string]$OutputPath,
@@ -59,6 +59,24 @@ if (-not (Test-IsAdministrator)) {
 
 if (-not $PartitionNumbers -or $PartitionNumbers.Count -eq 0) {
     throw "Debes indicar al menos una particion."
+}
+
+$PartitionNumbers = @(
+    $PartitionNumbers |
+        ForEach-Object { $_ -split "," } |
+        ForEach-Object { $_.Trim() } |
+        Where-Object { $_ } |
+        ForEach-Object {
+            $value = 0
+            if (-not [int]::TryParse($_, [ref]$value)) {
+                throw "El valor de particion '$_' no es valido."
+            }
+            $value
+        }
+) | Sort-Object -Unique
+
+if (-not $PartitionNumbers -or $PartitionNumbers.Count -eq 0) {
+    throw "Debes indicar al menos una particion valida."
 }
 
 $disk = Get-Disk -Number $DiskNumber -ErrorAction SilentlyContinue

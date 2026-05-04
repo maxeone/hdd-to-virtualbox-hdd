@@ -1023,7 +1023,7 @@ class VBoxBootBuilderApp:
                 "-DiskNumber",
                 str(self.selected_disk["DiskNumber"]),
                 "-PartitionNumbers",
-                *[str(x) for x in self.selected_partition_numbers()],
+                ",".join(str(x) for x in self.selected_partition_numbers()),
                 "-OutputPath",
                 output_path,
                 "-ToolsDir",
