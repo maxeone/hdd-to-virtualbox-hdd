@@ -6,6 +6,10 @@ Fue creada para emular dentro de VirtualBox un disco duro externo con Windows 7 
 
 La aplicacion de escritorio incluida en este repositorio se llama `VirtualBox Boot Builder`. Automatiza un flujo que normalmente obliga a hacer varios pasos manuales:
 
+![Captura principal de VirtualBox Boot Builder](docs/images/virtualbox-boot-builder-main.png)
+
+Pantalla principal de la app seleccionando un disco origen y las particiones sugeridas antes de crear una imagen arrancable en VirtualBox.
+
 - inspeccionar discos y particiones
 - elegir la particion de arranque y la particion de Windows
 - crear un `VHD` o `VHDX` con Sysinternals `Disk2vhd`

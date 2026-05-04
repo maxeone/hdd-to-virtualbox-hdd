@@ -6,6 +6,10 @@ It was created to emulate an external Windows 7 hard drive with preloaded softwa
 
 Spanish instructions: see [LEEME.md](LEEME.md).
 
+![VirtualBox Boot Builder main screenshot](docs/images/virtualbox-boot-builder-main.png)
+
+Main screen of the app selecting a source disk and suggested partitions before creating a VirtualBox-bootable image.
+
 The desktop application in this repository is named `VirtualBox Boot Builder`. It automates a workflow that usually requires several manual steps:
 
 - inspect disks and partitions
