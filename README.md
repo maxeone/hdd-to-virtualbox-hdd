@@ -2,6 +2,8 @@
 
 HDD to VirtualBox HDD is a Windows GUI utility for turning an existing Windows installation on a physical, USB, or external disk into a VirtualBox-bootable image.
 
+Spanish instructions: see [LEEME.md](LEEME.md).
+
 The desktop application in this repository is named `VirtualBox Boot Builder`. It automates a workflow that usually requires several manual steps:
 
 - inspect disks and partitions
