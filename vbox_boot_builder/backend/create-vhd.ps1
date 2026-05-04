@@ -82,6 +82,15 @@ if (-not (Test-Path $outputDir)) {
     New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 }
 
+$outputRoot = [System.IO.Path]::GetPathRoot($resolvedOutputPath)
+if ($outputRoot -match '^[A-Za-z]:\\?$') {
+    $outputDriveLetter = $outputRoot.Substring(0, 1)
+    $outputPartition = Get-Partition -DriveLetter $outputDriveLetter -ErrorAction SilentlyContinue
+    if ($outputPartition -and $outputPartition.DiskNumber -eq $DiskNumber) {
+        throw "La carpeta de salida esta en el mismo disco origen. Elige una carpeta en otro disco para evitar errores al capturar la imagen."
+    }
+}
+
 if ((Test-Path $resolvedOutputPath) -and -not $ForceOverwrite) {
     throw "El archivo de salida ya existe. Activa ForceOverwrite o cambia la ruta."
 }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+from collections import deque
 import queue
 import subprocess
 import sys
@@ -118,6 +119,8 @@ TRANSLATIONS = {
         "select_all": "Select all",
         "clear": "Clear",
         "preset": "Preset",
+        "output_directory": "Output folder",
+        "output_filename": "Output file name",
         "output_path": "Output VHD/VHDX",
         "browse": "Browse",
         "firmware": "Firmware",
@@ -185,6 +188,10 @@ TRANSLATIONS = {
         "select_disk_error": "Select a source disk.",
         "select_partition_error": "Select at least one partition.",
         "output_path_error": "Choose an output path.",
+        "output_directory_error": "Choose an output folder.",
+        "output_filename_error": "Choose an output file name.",
+        "output_extension_error": "The output file must end in .vhd or .vhdx.",
+        "output_on_source_disk_error": "The output folder is on the selected source disk. Choose a folder on a different disk.",
         "vm_name_error": "Enter the VM name.",
         "guest_os_error": "Choose a VirtualBox guest OS type.",
         "memory_error": "Memory must be a positive integer.",
@@ -219,6 +226,8 @@ TRANSLATIONS = {
         "select_all": "Seleccionar todas",
         "clear": "Limpiar",
         "preset": "Preset",
+        "output_directory": "Carpeta de salida",
+        "output_filename": "Nombre del archivo de salida",
         "output_path": "Salida VHD/VHDX",
         "browse": "Examinar",
         "firmware": "Firmware",
@@ -286,6 +295,10 @@ TRANSLATIONS = {
         "select_disk_error": "Selecciona un disco origen.",
         "select_partition_error": "Selecciona al menos una partición.",
         "output_path_error": "Indica la ruta de salida.",
+        "output_directory_error": "Indica la carpeta de salida.",
+        "output_filename_error": "Indica el nombre del archivo de salida.",
+        "output_extension_error": "El archivo de salida debe terminar en .vhd o .vhdx.",
+        "output_on_source_disk_error": "La carpeta de salida esta en el mismo disco origen. Elige una carpeta en otro disco.",
         "vm_name_error": "Indica el nombre de la VM.",
         "guest_os_error": "Indica el tipo de SO invitado de VirtualBox.",
         "memory_error": "La memoria debe ser un entero positivo.",
@@ -436,7 +449,8 @@ class VBoxBootBuilderApp:
         self.status_var = tk.StringVar(value=self.tr("status_ready"))
         self.preset_var = tk.StringVar(value="Windows 7 Legacy")
         self.disk_var = tk.StringVar()
-        self.output_path_var = tk.StringVar(value=str(DEFAULT_OUTPUT_DIR / "bootable-image.vhd"))
+        self.output_dir_var = tk.StringVar(value=str(DEFAULT_OUTPUT_DIR))
+        self.output_name_var = tk.StringVar(value="bootable-image.vhd")
         self.force_overwrite_var = tk.BooleanVar(value=True)
         self.repair_after_create_var = tk.BooleanVar(value=True)
         self.firmware_var = tk.StringVar(value="BIOS")
@@ -454,6 +468,7 @@ class VBoxBootBuilderApp:
         self.controller_var = tk.StringVar(value="IDE")
         self.chipset_var = tk.StringVar(value="PIIX3")
         self.detach_disks_var = tk.BooleanVar(value=True)
+        self.last_auto_output_name = "bootable-image.vhd"
         self.refresh_admin_label()
 
     def refresh_admin_label(self) -> None:
@@ -603,26 +618,29 @@ class VBoxBootBuilderApp:
         preset_combo.grid(row=0, column=1, sticky="ew", pady=(0, 8))
         preset_combo.bind("<<ComboboxSelected>>", lambda _event: self.apply_preset())
 
-        ttk.Label(frame, text=self.tr("output_path")).grid(row=1, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(frame, text=self.tr("output_directory")).grid(row=1, column=0, sticky="w", pady=(0, 4))
         output_row = ttk.Frame(frame)
         output_row.grid(row=1, column=1, sticky="ew", pady=(0, 8))
         output_row.columnconfigure(0, weight=1)
-        ttk.Entry(output_row, textvariable=self.output_path_var).grid(row=0, column=0, sticky="ew")
-        ttk.Button(output_row, text=self.tr("browse"), command=self.browse_output_path).grid(row=0, column=1, padx=(8, 0))
+        ttk.Entry(output_row, textvariable=self.output_dir_var).grid(row=0, column=0, sticky="ew")
+        ttk.Button(output_row, text=self.tr("browse"), command=self.browse_output_directory).grid(row=0, column=1, padx=(8, 0))
 
-        ttk.Label(frame, text=self.tr("firmware")).grid(row=2, column=0, sticky="w", pady=(0, 4))
-        ttk.Combobox(frame, textvariable=self.firmware_var, state="readonly", values=["Auto", "BIOS", "UEFI"]).grid(row=2, column=1, sticky="ew", pady=(0, 8))
+        ttk.Label(frame, text=self.tr("output_filename")).grid(row=2, column=0, sticky="w", pady=(0, 4))
+        ttk.Entry(frame, textvariable=self.output_name_var).grid(row=2, column=1, sticky="ew", pady=(0, 8))
 
-        ttk.Label(frame, text=self.tr("boot_partition")).grid(row=3, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(frame, text=self.tr("firmware")).grid(row=3, column=0, sticky="w", pady=(0, 4))
+        ttk.Combobox(frame, textvariable=self.firmware_var, state="readonly", values=["Auto", "BIOS", "UEFI"]).grid(row=3, column=1, sticky="ew", pady=(0, 8))
+
+        ttk.Label(frame, text=self.tr("boot_partition")).grid(row=4, column=0, sticky="w", pady=(0, 4))
         self.boot_partition_combo = ttk.Combobox(frame, textvariable=self.boot_partition_var, state="readonly")
-        self.boot_partition_combo.grid(row=3, column=1, sticky="ew", pady=(0, 8))
+        self.boot_partition_combo.grid(row=4, column=1, sticky="ew", pady=(0, 8))
 
-        ttk.Label(frame, text=self.tr("windows_partition")).grid(row=4, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(frame, text=self.tr("windows_partition")).grid(row=5, column=0, sticky="w", pady=(0, 4))
         self.windows_partition_combo = ttk.Combobox(frame, textvariable=self.windows_partition_var, state="readonly")
-        self.windows_partition_combo.grid(row=4, column=1, sticky="ew", pady=(0, 8))
+        self.windows_partition_combo.grid(row=5, column=1, sticky="ew", pady=(0, 8))
 
         toggles = ttk.LabelFrame(frame, text=self.tr("flow_options"), padding=12)
-        toggles.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        toggles.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         toggles.columnconfigure(0, weight=1)
 
         ttk.Checkbutton(toggles, text=self.tr("overwrite_output"), variable=self.force_overwrite_var).grid(row=0, column=0, sticky="w")
@@ -698,15 +716,29 @@ class VBoxBootBuilderApp:
     def set_status(self, text: str) -> None:
         self.status_var.set(text)
 
-    def browse_output_path(self) -> None:
-        path = filedialog.asksaveasfilename(
-            title=self.tr("save_image"),
-            defaultextension=".vhd",
-            filetypes=[("Virtual Hard Disk", "*.vhd"), ("Virtual Hard Disk v2", "*.vhdx"), (self.tr("all_files"), "*.*")],
-            initialdir=str(DEFAULT_OUTPUT_DIR),
-        )
+    def browse_output_directory(self) -> None:
+        initial_dir = self.output_dir_var.get().strip() or str(DEFAULT_OUTPUT_DIR)
+        path = filedialog.askdirectory(title=self.tr("output_directory"), initialdir=initial_dir, mustexist=False)
         if path:
-            self.output_path_var.set(path)
+            self.output_dir_var.set(path)
+
+    def get_output_path(self) -> str:
+        output_dir = self.output_dir_var.get().strip()
+        output_name = self.output_name_var.get().strip()
+        if not output_dir or not output_name:
+            return ""
+        if Path(output_name).suffix == "":
+            output_name = f"{output_name}.vhd"
+        return str(Path(output_dir) / output_name)
+
+    def find_disk_number_for_drive(self, drive: str) -> int | None:
+        normalized = drive.rstrip(":\\").upper()
+        for disk in self.disks:
+            for partition in disk.get("Partitions", []):
+                letter = (partition.get("DriveLetter") or "").rstrip(":\\").upper()
+                if letter and letter == normalized:
+                    return disk["DiskNumber"]
+        return None
 
     def apply_preset(self, initial: bool = False) -> None:
         preset = PRESETS[self.preset_var.get()]
@@ -799,8 +831,10 @@ class VBoxBootBuilderApp:
 
         self.vm_name_var.set(f"Disk{disk['DiskNumber']}_Imported")
         default_name = f"disk{disk['DiskNumber']}-bootable.vhd"
-        if self.output_path_var.get().endswith("bootable-image.vhd") or not Path(self.output_path_var.get()).exists():
-            self.output_path_var.set(str(DEFAULT_OUTPUT_DIR / default_name))
+        current_output_name = self.output_name_var.get().strip()
+        if not current_output_name or current_output_name == self.last_auto_output_name:
+            self.output_name_var.set(default_name)
+            self.last_auto_output_name = default_name
 
         summary_lines = [
             self.tr("summary_disk", disk_number=disk["DiskNumber"]),
@@ -931,9 +965,23 @@ class VBoxBootBuilderApp:
         if not selected_partitions:
             raise RuntimeError(self.tr("select_partition_error"))
 
-        output_path = self.output_path_var.get().strip()
+        output_dir = self.output_dir_var.get().strip()
+        output_name = self.output_name_var.get().strip()
+        output_path = self.get_output_path()
+        if not output_dir:
+            raise RuntimeError(self.tr("output_directory_error"))
+        if not output_name:
+            raise RuntimeError(self.tr("output_filename_error"))
         if not output_path:
             raise RuntimeError(self.tr("output_path_error"))
+        if Path(output_path).suffix.lower() not in {".vhd", ".vhdx"}:
+            raise RuntimeError(self.tr("output_extension_error"))
+
+        output_drive = Path(output_path).drive
+        if output_drive:
+            output_disk_number = self.find_disk_number_for_drive(output_drive)
+            if output_disk_number is not None and output_disk_number == self.selected_disk["DiskNumber"]:
+                raise RuntimeError(self.tr("output_on_source_disk_error"))
 
         if self.configure_vm_var.get():
             if not self.vm_name_var.get().strip():
@@ -968,7 +1016,8 @@ class VBoxBootBuilderApp:
             self.log(self.tr("log_preset", preset=self.preset_var.get()))
             self.log(self.tr("log_disk", disk=self.disk_label(self.selected_disk)))
             self.log(self.tr("log_partitions", partitions=", ".join(map(str, self.selected_partition_numbers()))))
-            self.log(self.tr("log_output", output=self.output_path_var.get()))
+            output_path = self.get_output_path()
+            self.log(self.tr("log_output", output=output_path))
 
             create_args = [
                 "-DiskNumber",
@@ -976,7 +1025,7 @@ class VBoxBootBuilderApp:
                 "-PartitionNumbers",
                 *[str(x) for x in self.selected_partition_numbers()],
                 "-OutputPath",
-                self.output_path_var.get(),
+                output_path,
                 "-ToolsDir",
                 str(ensure_runtime_dir() / "tools"),
             ]
@@ -988,7 +1037,7 @@ class VBoxBootBuilderApp:
             if self.repair_after_create_var.get():
                 repair_args = [
                     "-VhdPath",
-                    self.output_path_var.get(),
+                    output_path,
                     "-FirmwareMode",
                     self.firmware_var.get(),
                 ]
@@ -1010,7 +1059,7 @@ class VBoxBootBuilderApp:
             if self.configure_vm_var.get():
                 configure_args = [
                     "-VhdPath",
-                    self.output_path_var.get(),
+                    output_path,
                     "-VmName",
                     self.vm_name_var.get().strip(),
                     "-GuestOSType",
@@ -1047,6 +1096,7 @@ class VBoxBootBuilderApp:
         self.log("")
         self.log(self.tr("run_script", script=script_name))
         cmd = self._powershell_command(script_path, arguments)
+        output_tail: deque[str] = deque(maxlen=25)
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -1058,9 +1108,14 @@ class VBoxBootBuilderApp:
         )
         assert process.stdout is not None
         for line in process.stdout:
-            self.log(line.rstrip())
+            clean_line = line.rstrip()
+            output_tail.append(clean_line)
+            self.log(clean_line)
         process.wait()
         if process.returncode != 0:
+            tail_text = "\n".join(item for item in output_tail if item)
+            if tail_text:
+                raise RuntimeError(f"{script_name} fallo con codigo {process.returncode}.\n\n{tail_text}")
             raise RuntimeError(f"{script_name} fallo con codigo {process.returncode}.")
 
 

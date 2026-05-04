@@ -30,6 +30,7 @@ Eso hace que el proyecto sea especialmente util para pruebas con Windows 7, vali
 ## Funciones principales
 
 - Deteccion de discos y particiones desde una GUI
+- Seleccion separada de carpeta de salida y nombre del archivo
 - Seleccion sugerida de particiones para esquemas BIOS y UEFI comunes
 - Presets para Windows 7 legado, instalaciones BIOS genericas e instalaciones UEFI genericas
 - Parametros configurables de firmware, controlador, chipset, memoria, CPUs y tipo de SO invitado de VirtualBox
@@ -63,7 +64,7 @@ La app pide elevacion automaticamente. El `.exe` empaquetado tambien se construy
 1. Abre la app como administrador.
 2. Selecciona el disco origen.
 3. Manten las particiones sugeridas de arranque y Windows, o ajustalas manualmente.
-4. Elige una salida `VHD` o `VHDX`.
+4. Elige la carpeta de salida y el nombre del archivo `VHD` o `VHDX`. Por defecto, la app usa la carpeta donde esta el `.exe`.
 5. Manten activada la reparacion salvo que quieras solo captura en bruto.
 6. En la pestana VirtualBox, elige el tipo de SO invitado y la configuracion de la VM.
 7. Ejecuta el flujo.
@@ -71,6 +72,7 @@ La app pide elevacion automaticamente. El `.exe` empaquetado tambien se construy
 ## Notas
 
 - Las instalaciones Windows BIOS antiguas suelen necesitar tanto la particion pequena de arranque como la particion principal de Windows.
+- No guardes la imagen generada en el mismo disco fisico que intentas capturar. La app valida esto antes de empezar.
 - Si un Windows copiado sigue cayendo con `0x7B`, la app intenta aplicar un parche offline de drivers de almacenamiento y limpiar `MountedDevices`.
 - Para Windows antiguos, `IDE` suele ser mas compatible que `SATA`.
 - Algunos sistemas pueden seguir necesitando Reparacion de inicio desde una ISO de Windows o `sysprep /generalize` en la maquina original.

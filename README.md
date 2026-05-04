@@ -32,6 +32,7 @@ This makes the project especially useful for Windows 7 testing, legacy software 
 ## Main Features
 
 - Disk and partition discovery from a GUI
+- Separate output folder and output file name selection
 - Suggested partition selection for common BIOS and UEFI layouts
 - Presets for legacy Windows 7, generic BIOS installs, and generic UEFI installs
 - Configurable firmware mode, controller type, chipset, memory, CPUs, and VirtualBox guest OS type
@@ -65,7 +66,7 @@ The app requests elevation automatically. The packaged `.exe` is also built with
 1. Open the app as administrator.
 2. Select the source disk.
 3. Keep the suggested boot and Windows partitions, or adjust them manually.
-4. Choose an output `VHD` or `VHDX`.
+4. Choose the output folder and the `VHD` or `VHDX` file name. By default, the app uses the folder where the `.exe` is located.
 5. Keep repair enabled unless you explicitly want raw capture only.
 6. In the VirtualBox tab, choose the guest OS type and VM settings.
 7. Run the workflow.
@@ -73,6 +74,7 @@ The app requests elevation automatically. The packaged `.exe` is also built with
 ## Notes
 
 - Legacy BIOS Windows installs often need both the small boot partition and the main Windows partition.
+- Do not save the generated image onto the same physical disk you are trying to capture. The app validates this before starting.
 - If a copied Windows system still stops with `0x7B`, the app attempts an offline storage-driver patch and clears `MountedDevices`.
 - For older Windows versions, `IDE` is often more compatible than `SATA`.
 - Some systems may still require Startup Repair from a Windows ISO or `sysprep /generalize` on the original machine.
