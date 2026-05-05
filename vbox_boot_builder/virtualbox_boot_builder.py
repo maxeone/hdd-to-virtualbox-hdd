@@ -1023,9 +1023,19 @@ class VBoxBootBuilderApp:
         self.refresh_partition_combos(disk)
         self.auto_select_partitions()
 
-        if disk.get("PartitionStyle") == "GPT" and self.preset_var.get() == "Windows 7 Legacy":
-            self.preset_var.set("Windows UEFI General")
-            self.apply_preset()
+        partition_style = disk.get("PartitionStyle")
+        if partition_style == "GPT":
+            if self.preset_var.get() in {"Windows 7 Legacy", "Windows BIOS General"}:
+                self.preset_var.set("Windows UEFI General")
+                self.apply_preset()
+            elif self.firmware_var.get() == "BIOS":
+                self.firmware_var.set("UEFI")
+        elif partition_style == "MBR":
+            if self.preset_var.get() == "Windows UEFI General":
+                self.preset_var.set("Windows BIOS General")
+                self.apply_preset()
+            elif self.firmware_var.get() == "UEFI":
+                self.firmware_var.set("BIOS")
 
     def _set_disk_summary(self, text: str) -> None:
         self.disk_summary.configure(state="normal")

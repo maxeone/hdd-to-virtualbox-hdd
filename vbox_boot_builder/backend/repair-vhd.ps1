@@ -139,6 +139,16 @@ function Get-EffectiveFirmwareMode {
         [Microsoft.Management.Infrastructure.CimInstance]$Disk
     )
 
+    if ($FirmwareMode -eq "UEFI" -and $Disk.PartitionStyle -ne "GPT") {
+        Write-Warning "Se pidio UEFI sobre un disco MBR. Cambio automatico a BIOS."
+        return "BIOS"
+    }
+
+    if ($FirmwareMode -eq "BIOS" -and $Disk.PartitionStyle -eq "GPT") {
+        Write-Warning "Se pidio BIOS sobre un disco GPT. Cambio automatico a UEFI."
+        return "UEFI"
+    }
+
     if ($FirmwareMode -ne "Auto") {
         return $FirmwareMode
     }
