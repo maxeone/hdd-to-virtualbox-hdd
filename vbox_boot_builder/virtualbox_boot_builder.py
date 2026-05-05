@@ -52,7 +52,7 @@ PRESETS = {
     },
     "Windows BIOS General": {
         "firmware": "BIOS",
-        "controller": "SATA",
+        "controller": "IDE",
         "chipset": "PIIX3",
         "guest_os": "Windows10_64",
         "repair": True,
