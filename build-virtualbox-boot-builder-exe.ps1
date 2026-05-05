@@ -27,6 +27,11 @@ python -m PyInstaller `
     --workpath $buildDir `
     $appScript
 
+$buildExitCode = $LASTEXITCODE
+if ($buildExitCode -ne 0) {
+    throw "PyInstaller fallo con codigo $buildExitCode."
+}
+
 Write-Host "Build completado."
 if ($OneDir) {
     Write-Host "Salida: $(Join-Path $distDir $name)"

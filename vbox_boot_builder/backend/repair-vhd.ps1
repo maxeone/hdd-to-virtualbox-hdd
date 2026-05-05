@@ -244,6 +244,66 @@ function Repair-UefiBoot {
     }
 }
 
+function Invoke-RegProcess {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments
+    )
+
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+
+    try {
+        $process = Start-Process `
+            -FilePath "reg.exe" `
+            -ArgumentList $Arguments `
+            -NoNewWindow `
+            -Wait `
+            -PassThru `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath
+
+        $stdout = ""
+        $stderr = ""
+        if (Test-Path -LiteralPath $stdoutPath) {
+            $rawStdout = Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue
+            if ($null -ne $rawStdout) {
+                $stdout = "$rawStdout".Trim()
+            }
+        }
+        if (Test-Path -LiteralPath $stderrPath) {
+            $rawStderr = Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
+            if ($null -ne $rawStderr) {
+                $stderr = "$rawStderr".Trim()
+            }
+        }
+
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            StdOut = $stdout
+            StdErr = $stderr
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Get-RegProviderPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$HiveRoot,
+
+        [string]$SubPath = ""
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SubPath)) {
+        return "Registry::$HiveRoot"
+    }
+
+    return "Registry::$HiveRoot\$SubPath"
+}
+
 function Enable-BootStorageDrivers {
     param(
         [string]$WindowsLetter
@@ -259,11 +319,15 @@ function Enable-BootStorageDrivers {
 
     Write-Host "Activando drivers de almacenamiento para el primer arranque..."
     foreach ($staleHive in @("HKLM\VHD_SYS", $hiveRoot)) {
-        & reg.exe unload $staleHive 2>$null | Out-Null
+        [void](Invoke-RegProcess -Arguments @("unload", $staleHive))
     }
 
-    & reg.exe load $hiveRoot $hivePath 2>$null | Out-Host
-    if ($LASTEXITCODE -ne 0) {
+    $loadResult = Invoke-RegProcess -Arguments @("load", $hiveRoot, $hivePath)
+    if ($loadResult.ExitCode -ne 0) {
+        $details = @($loadResult.StdOut, $loadResult.StdErr) -ne "" -join [Environment]::NewLine
+        if ($details) {
+            throw "No pude cargar el hive SYSTEM offline. $details"
+        }
         throw "No pude cargar el hive SYSTEM offline."
     }
 
@@ -299,22 +363,19 @@ function Enable-BootStorageDrivers {
 
         foreach ($controlSet in $controlSets) {
             foreach ($service in $services) {
-                $servicePath = "$hiveRoot\$controlSet\Services\$service"
-                & reg.exe query $servicePath 2>$null | Out-Null
-                if ($LASTEXITCODE -ne 0) {
+                $serviceSubPath = "$controlSet\Services\$service"
+                $servicePath = Get-RegProviderPath -HiveRoot $hiveRoot -SubPath $serviceSubPath
+                if (-not (Test-Path -LiteralPath $servicePath)) {
                     continue
                 }
 
-                & reg.exe add $servicePath /v Start /t REG_DWORD /d 0 /f 2>$null | Out-Null
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Host "  $controlSet\Services\$service -> Start=0"
-                }
+                New-ItemProperty -Path $servicePath -Name "Start" -PropertyType DWord -Value 0 -Force | Out-Null
+                Write-Host "  $serviceSubPath -> Start=0"
 
-                $startOverridePath = "$servicePath\StartOverride"
-                & reg.exe query $startOverridePath 2>$null | Out-Null
-                if ($LASTEXITCODE -eq 0) {
+                $startOverridePath = Join-Path $servicePath "StartOverride"
+                if (Test-Path -LiteralPath $startOverridePath) {
                     foreach ($valueName in @("0", "1", "2", "3")) {
-                        & reg.exe add $startOverridePath /v $valueName /t REG_DWORD /d 0 /f 2>$null | Out-Null
+                        New-ItemProperty -Path $startOverridePath -Name $valueName -PropertyType DWord -Value 0 -Force | Out-Null
                     }
                 }
             }
@@ -322,12 +383,20 @@ function Enable-BootStorageDrivers {
 
         if (-not $SkipMountedDevicesReset) {
             Write-Host "Limpiando MountedDevices para forzar reenumeracion..."
-            & reg.exe delete "$hiveRoot\MountedDevices" /va /f 2>$null | Out-Null
+            $mountedDevicesPath = Get-RegProviderPath -HiveRoot $hiveRoot -SubPath "MountedDevices"
+            if (Test-Path -LiteralPath $mountedDevicesPath) {
+                foreach ($propertyName in (Get-Item -Path $mountedDevicesPath).Property) {
+                    Remove-ItemProperty -Path $mountedDevicesPath -Name $propertyName -Force -ErrorAction SilentlyContinue
+                }
+            }
         }
     }
     finally {
         Start-Sleep -Milliseconds 300
-        & reg.exe unload $hiveRoot 2>$null | Out-Host
+        $unloadResult = Invoke-RegProcess -Arguments @("unload", $hiveRoot)
+        if ($unloadResult.ExitCode -ne 0) {
+            Write-Warning "No pude descargar el hive temporal $hiveRoot. Sigo igualmente."
+        }
     }
 }
 
